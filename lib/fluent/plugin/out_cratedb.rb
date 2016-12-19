@@ -1,13 +1,13 @@
 require 'crate_ruby'
-require 'digest'
 require 'fluent/output'
-
 
 module Fluent
   class Fluent::CratedbOutput < Fluent::BufferedOutput
     Fluent::Plugin.register_output('cratedb', self)
 
     include Fluent::SetTimeKeyMixin
+    include Fluent::SetTagKeyMixin
+    include Fluent::HandleTagNameMixin
 
     config_param :host, :string, :default => 'localhost', :desc => "CrateDB host."
     config_param :port, :integer, :default => 4200, :desc => "CrateDB port."
@@ -37,9 +37,13 @@ module Fluent
 
     def start
       super
-      require 'logger'
-      opts = {:http_options => @http_options, :logger => Logger.new(STDERR)}
-      @client = CrateClient.new(@servers, opts)
+      opts = {:http_options => @http_options, :logger => log}
+      begin
+        @client = CrateClient.new(@servers, opts)
+        log.info "CrateDB connection confirmed: #{@servers.join(", ")}"
+      rescue => e
+        raise e
+      end
     end
 
     def shutdown
@@ -57,11 +61,7 @@ module Fluent
         values << data
       end
       sql = "INSERT INTO #{@table} (#{@column_names.join(',')}) VALUES (#{ @column_names.map { |key| '?' }.join(',') })"
-      #log.info(sql)
       @client.execute(sql, nil, values, @http_options)
-
-      #digest = Digest::SHA1.hexdigest(data)
-      #@client.blob_put(table_name, digest, data)
     end
 
 
@@ -93,14 +93,14 @@ module Fluent
     # @param [Hash] Net::HTTP options (open_timeout, read_timeout)
     # @return [ResultSet]
     def execute(sql, args = nil, bulk_args = nil, http_options = {})
-      #@logger.debug sql
+      @logger.debug sql
       req = Net::HTTP::Post.new("/_sql", initheader = {'Content-Type' => 'application/json'})
       body = {"stmt" => sql}
       body.merge!({'args' => args}) if args
       body.merge!({'bulk_args' => bulk_args}) if bulk_args
       req.body = body.to_json
       response = request(req, http_options)
-      #@logger.debug response.body
+      @logger.debug response.body
       success = case response.code
                   when /^2\d{2}/
                     ResultSet.new response.body
