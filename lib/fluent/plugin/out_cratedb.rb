@@ -16,6 +16,9 @@ module Fluent
     config_param :column_names, :string, :desc => "Bulk insert column."
     config_param :key_names, :string, :default => nil
     config_param :table, :string, :desc => "Bulk insert table."
+    config_param :http_auth, :bool, :default => false, :desc => "Enable HTTP auth."
+    config_param :user, :string, :default => nil, :desc => "HTTP user."
+    config_param :password, :string, :default => nil, :desc => "HTTP password."
 
     # Define `log` method for v0.10.42 or earlier
     unless method_defined?(:log)
@@ -61,7 +64,15 @@ module Fluent
         values << data
       end
       sql = "INSERT INTO #{@table} (#{@column_names.join(',')}) VALUES (#{ @column_names.map { |key| '?' }.join(',') })"
-      @client.execute(sql, nil, values, @http_options)
+      @client.execute(
+        sql,
+        nil,
+        values,
+        @http_options,
+        @http_auth,
+        @user,
+        @password,
+      )
     end
 
 
@@ -92,13 +103,16 @@ module Fluent
     # @param [Array] args Array of values used for parameter substitution
     # @param [Hash] Net::HTTP options (open_timeout, read_timeout)
     # @return [ResultSet]
-    def execute(sql, args = nil, bulk_args = nil, http_options = {})
+    def execute(sql, args = nil, bulk_args = nil, http_options = {}, http_auth = false, user = nil, password = nil)
       @logger.debug sql
       req = Net::HTTP::Post.new("/_sql", initheader = {'Content-Type' => 'application/json'})
       body = {"stmt" => sql}
       body.merge!({'args' => args}) if args
       body.merge!({'bulk_args' => bulk_args}) if bulk_args
       req.body = body.to_json
+      if http_auth
+        req.basic_auth user, password
+      end
       response = request(req, http_options)
       @logger.debug response.body
       success = case response.code
